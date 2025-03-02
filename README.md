@@ -1,6 +1,15 @@
 # Safetensors implementation for [Zigrad](https://github.com/Marco-Christiani/zigrad)
 
 ## Benchmarks
+
+<p align="center">
+  <img alt="Deserialization benchmark" src="assets/deserialization.png">
+</p>
+
+<p align="center">
+  <img alt="Serialization benchmark" src="assets/serialization.png">
+</p>
+
 ```
 Rust (official impl)
 Serialize 10_MB       time:   [521.39 µs 522.73 µs 524.21 µs]
