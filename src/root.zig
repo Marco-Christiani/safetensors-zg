@@ -24,7 +24,7 @@ pub const Error = error{
 };
 
 /// Maximum header size limit [ref](https://github.com/huggingface/safetensors/blob/7bf65ad7d56be10331dd9c15b67d82d1c5f39cc0/safetensors/src/tensor.rs#L8)
-const MAX_HEADER_SIZE = 100_000_000;
+pub const MAX_HEADER_SIZE = 100_000_000;
 
 /// Officially supported data types
 pub const Dtype = enum {
@@ -120,7 +120,7 @@ pub const Tensor = struct {
     name: []const u8,
     dtype: Dtype,
     shape: []const usize,
-    data: []const u8,
+    data: []align(8) const u8,
 };
 
 /// Serialize a list of Tensors into a buffer formatted as safetensors.
@@ -199,7 +199,9 @@ pub fn serializeTensors(tensors: std.ArrayList(Tensor), allocator: std.mem.Alloc
     std.mem.writePackedIntNative(u64, out_buffer[0..8], 0, json_len);
 
     // Copy header and pad with spaces
-    @memcpy(out_buffer[8 .. 8 + json_len], try header_buf.toOwnedSlice());
+    const header = try header_buf.toOwnedSlice();
+    @memcpy(out_buffer[8 .. 8 + json_len], header);
+    allocator.free(header);
     if (padded_len > json_len) {
         @memset(out_buffer[8 + json_len .. 8 + padded_len], ' ');
     }
@@ -235,7 +237,7 @@ pub const TensorInfo = struct {
 /// View into a tensor (after loading)
 pub const TensorView = struct {
     info: TensorInfo,
-    data: []const u8,
+    data: []align(8) const u8,
 };
 
 /// SafeTensors container representing a loaded file.
@@ -244,7 +246,7 @@ pub const SafeTensorsFile = struct {
     allocator: std.mem.Allocator,
     header_size: usize,
     tensors: []TensorInfo,
-    raw_data: []const u8,
+    raw_data: []align(8) const u8,
 
     pub fn deinit(self: *Self) void {
         for (self.tensors) |*tensor| {
@@ -260,9 +262,14 @@ pub const SafeTensorsFile = struct {
                 const start = info.data_offset.start + 8 + self.header_size;
                 const end = info.data_offset.end + 8 + self.header_size;
                 if (end > self.raw_data.len) return Error.IncompleteBuffer;
+
+                // Verify alignment
+                const data_start_addr = @intFromPtr(self.raw_data.ptr) + start;
+                if (data_start_addr % 8 != 0) return Error.UnalignedTensor;
+
                 return TensorView{
                     .info = info,
-                    .data = self.raw_data[start..end],
+                    .data = @alignCast(self.raw_data[start..end]),
                 };
             }
         }
@@ -276,12 +283,20 @@ pub const SafeTensorsFile = struct {
         if (header_size > MAX_HEADER_SIZE) return Error.HeaderOverflow;
         const header_end = 8 + header_size;
         if (header_end > data.len) return Error.BufferTooSmall;
+
+        // Verify the data buffer is 8-byte aligned
+        const data_addr = @intFromPtr(data.ptr);
+        if (data_addr % 8 != 0) return Error.UnalignedTensor;
+
+        // Calculate padded header size (data starts at 8-byte aligned boundary)
+        const padded_header_size = (header_size + 7) & ~(@as(usize, 7));
+
         const tensors = try parseHeader(data[8..header_end], allocator);
         return Self{
             .allocator = allocator,
-            .header_size = header_size,
+            .header_size = padded_header_size,
             .tensors = tensors,
-            .raw_data = data,
+            .raw_data = @alignCast(data),
         };
     }
 };
@@ -575,9 +590,9 @@ const JsonScanner = struct {
                     // Parse number
                     while (self.pos < self.input.len and
                         ((self.input[self.pos] >= '0' and self.input[self.pos] <= '9') or
-                        self.input[self.pos] == '.' or self.input[self.pos] == 'e' or
-                        self.input[self.pos] == 'E' or self.input[self.pos] == '+' or
-                        self.input[self.pos] == '-'))
+                            self.input[self.pos] == '.' or self.input[self.pos] == 'e' or
+                            self.input[self.pos] == 'E' or self.input[self.pos] == '+' or
+                            self.input[self.pos] == '-'))
                     {
                         self.pos += 1;
                     }
@@ -593,7 +608,7 @@ const JsonScanner = struct {
     fn skipWhitespace(self: *JsonScanner) void {
         while (self.pos < self.input.len and
             (self.input[self.pos] == ' ' or self.input[self.pos] == '\t' or
-            self.input[self.pos] == '\n' or self.input[self.pos] == '\r'))
+                self.input[self.pos] == '\n' or self.input[self.pos] == '\r'))
         {
             self.pos += 1;
         }
@@ -669,13 +684,30 @@ test "deserialize" {
         \\  }
         \\}
     ;
-    var data = std.ArrayList(u8).init(allocator);
-    defer data.deinit();
-    try data.writer().writeInt(u64, header.len, .little);
-    try data.appendSlice(header);
-    try data.appendSlice(&[_]u8{0} ** (16 * @sizeOf(f32)));
 
-    var tensors = try SafeTensorsFile.deserialize(data.items, allocator);
+    // Calculate total size with proper alignment
+    const header_size = header.len;
+    const padded_header_size = (header_size + 7) & ~(@as(usize, 7)); // align to 8 bytes
+    const data_size = 4 * @sizeOf(f32); // 2x2 f32 tensor
+    const total_size = 8 + padded_header_size + data_size;
+
+    // Allocate aligned buffer
+    var aligned_buffer = try allocator.alignedAlloc(u8, 8, total_size);
+    defer allocator.free(aligned_buffer);
+
+    // Write header size
+    std.mem.writePackedIntNative(u64, aligned_buffer[0..8], 0, header_size);
+
+    // Write header and pad to 8-byte boundary
+    @memcpy(aligned_buffer[8 .. 8 + header_size], header);
+    if (padded_header_size > header_size) {
+        @memset(aligned_buffer[8 + header_size .. 8 + padded_header_size], ' ');
+    }
+
+    // Write tensor data (zeros)
+    @memset(aligned_buffer[8 + padded_header_size ..], 0);
+
+    var tensors = try SafeTensorsFile.deserialize(aligned_buffer, allocator);
     defer tensors.deinit();
 
     const tensor = try tensors.get("weights");
