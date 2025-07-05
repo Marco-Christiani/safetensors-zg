@@ -72,7 +72,6 @@ fn benchSerialize(allocator: std.mem.Allocator) !BmResult {
         // See comments regarding f32
         total_mb += sample.data.len / @as(usize, 1e6);
     }
-    std.debug.print("total_mb: {d} n_layers*2: {d}\n", .{ total_mb, n_layers * 2 });
     // Each tensor is 2MB
     std.debug.assert(total_mb == n_layers * 2);
 
@@ -129,7 +128,6 @@ fn benchDeserialize(allocator: std.mem.Allocator) !BmResult {
         // See comments regarding f32
         total_mb += sample.data.len / @as(usize, 1e6);
     }
-    std.debug.print("total_mb: {d} n_layers*2: {d}\n", .{ total_mb, n_layers * 2 });
     // Each tensor is 2MB
     std.debug.assert(total_mb == n_layers * 2);
 
