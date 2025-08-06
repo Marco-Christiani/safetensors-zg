@@ -2,14 +2,25 @@
 
 ## Benchmarks
 
-NOTE: this needs to updated, our deserialize got faster, upstream serialize got faster.
-
 ```
 Rust (official impl)
-Serialize 10_MB       time:   [521.39 µs 522.73 µs 524.21 µs]
-Deserialize 10_MB      time:   [2.6482 µs 2.6622 µs 2.6763 µs]
+Serialize 10_MB       time:   [410.56 µs 411.54 µs 412.55 µs]
+Deserialize 10_MB      time:   [2.5461 µs 2.5503 µs 2.5558 µs]
 
 Zig (ours)
-Serialize 10MB [min=328.709, avg=339.422, max=351.483]
-Deserialize 10MB [min=0.902, avg=0.982, max=1.042]
+Serialization: 10_MB [min=220.658, avg=311.882, max=330.668]
+Deserialization: 10_MB [min=0.831, avg=0.842, max=0.911]
+```
+
+![](./speedup.png)
+
+System info
+
+```
+Kernel: 6.8.0-48-generic
+CPU: AMD Ryzen Threadripper PRO 5975WX
+CPU Arch: x86_64
+Zig: 0.14.1
+Cargo: cargo 1.87.0
+Safetensors: b9ccdc69c0ba1f3fad785960981600a6a7553969
 ```

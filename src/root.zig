@@ -127,12 +127,11 @@ pub const Tensor = struct {
 /// NOTE: might make more sense to accept a writer here
 pub fn serializeTensors(tensors: std.ArrayList(Tensor), allocator: std.mem.Allocator) ![]u8 {
     const sorted_tensors = blk: {
-        if (build_options.enable_sort) {
+        if (build_options.enable_sort and tensors.items.len > 1) {
             const sorted_tensors = try allocator.alloc(Tensor, tensors.items.len);
             @memcpy(sorted_tensors, tensors.items);
 
-            // Sort by dtype alignment (descending) and then by name
-            // This is just following the official implementation. No other reason (doesnt help perf, might hurt worst case).
+            // Sort by dtype alignment (descending) and then by name as done in the official impl
             std.sort.insertion(Tensor, sorted_tensors, {}, struct {
                 fn lessThan(_: void, a: Tensor, b: Tensor) bool {
                     const a_size = a.dtype.size();

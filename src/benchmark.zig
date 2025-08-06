@@ -139,9 +139,16 @@ fn benchDeserialize(allocator: std.mem.Allocator) !BmResult {
     var fba = std.heap.FixedBufferAllocator.init(&buf);
 
     // warmup
+    var sum_total: usize = 0;
     for (0..5) |_| {
-        _ = try stz.SafeTensorsFile.deserialize(serialized, fba.allocator());
+        var result = try stz.SafeTensorsFile.deserialize(serialized, fba.allocator());
+        result.deinit();
         defer fba.reset();
+        for (result.tensors) |tensor| sum_total += blk: {
+            var s: usize = 1;
+            for (tensor.shape) |d| s *= d;
+            break :blk s;
+        };
     }
 
     var total: usize = 0;
@@ -151,13 +158,22 @@ fn benchDeserialize(allocator: std.mem.Allocator) !BmResult {
     const n = 100;
     for (0..n) |_| {
         timer.reset();
-        _ = try stz.SafeTensorsFile.deserialize(serialized, fba.allocator());
+        var result = try stz.SafeTensorsFile.deserialize(serialized, fba.allocator());
         const time = timer.lap();
+        result.deinit();
         fba.reset();
         total += time;
         if (time < min) min = time;
         if (time > max) max = time;
+
+        for (result.tensors) |tensor| sum_total += blk: {
+            var s: usize = 1;
+            for (tensor.shape) |d| s *= d;
+            break :blk s;
+        };
     }
+
+    std.debug.print("total len: {d}\n", .{sum_total});
 
     return BmResult{
         .total_mb = total_mb,

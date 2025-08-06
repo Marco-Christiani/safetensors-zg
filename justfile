@@ -1,5 +1,4 @@
-default:
-  build
+default: build
 
 build:
   zig build test
