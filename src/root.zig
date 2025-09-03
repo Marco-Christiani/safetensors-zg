@@ -152,9 +152,9 @@ pub fn serializeTensors(tensors: std.ArrayList(Tensor), allocator: std.mem.Alloc
     // Get offsets for each tensor in the data section
     // offsets relative to the start of the data section
     var offset: u64 = 0;
-    var header_buf = std.ArrayList(u8).init(allocator);
-    defer header_buf.deinit();
-    const writer = header_buf.writer();
+    var header_buf = std.ArrayList(u8).empty;
+    defer header_buf.deinit(allocator);
+    const writer = header_buf.writer(allocator);
     try writer.writeAll("{");
     var first = true;
     for (sorted_tensors) |tensor| {
@@ -176,13 +176,13 @@ pub fn serializeTensors(tensors: std.ArrayList(Tensor), allocator: std.mem.Alloc
         try writer.writeAll("\"shape\":[");
         for (tensor.shape, 0..) |dim, i| {
             if (i != 0) try writer.writeAll(", ");
-            try writer.print("{d}", .{dim});
+            try writer.print("{}", .{dim});
         }
         try writer.writeAll("],");
 
         // data_offsets
         // brace is doubled so it's treated as a literal
-        try writer.print("\"data_offsets\":[{d},{d}]}}", .{ offset, end_offset });
+        try writer.print("\"data_offsets\":[{},{}]}}", .{ offset, end_offset });
         offset = end_offset;
     }
     try writer.writeAll("}");
@@ -198,7 +198,7 @@ pub fn serializeTensors(tensors: std.ArrayList(Tensor), allocator: std.mem.Alloc
     std.mem.writePackedIntNative(u64, out_buffer[0..8], 0, json_len);
 
     // Copy header and pad with spaces
-    const header = try header_buf.toOwnedSlice();
+    const header = try header_buf.toOwnedSlice(allocator);
     @memcpy(out_buffer[8 .. 8 + json_len], header);
     allocator.free(header);
     if (padded_len > json_len) {
@@ -302,8 +302,8 @@ pub const SafeTensorsFile = struct {
 
 /// Parses JSON header from a slice into tensor metadata
 fn parseHeader(json: []const u8, allocator: std.mem.Allocator) ![]TensorInfo {
-    var tensors = std.ArrayList(TensorInfo).init(allocator);
-    defer tensors.deinit();
+    var tensors = std.ArrayList(TensorInfo).empty;
+    defer tensors.deinit(allocator);
 
     var scanner = JsonScanner.init(json);
     try scanner.expectToken(.ObjectBegin);
@@ -363,15 +363,15 @@ fn parseHeader(json: []const u8, allocator: std.mem.Allocator) ![]TensorInfo {
                 try scanner.expectToken(.ArrayBegin);
 
                 // Count and parse dims
-                var dimensions = std.ArrayList(usize).init(allocator);
-                defer dimensions.deinit();
+                var dimensions = std.ArrayList(usize).empty;
+                defer dimensions.deinit(allocator);
                 if (scanner.peek() != .ArrayEnd) { // array isnt empty
                     while (true) {
                         const dim_token = try scanner.nextToken();
                         if (dim_token != .Number) return Error.InvalidHeader;
 
                         // NOTE: while the parser supports scientific notation, this wont.
-                        try dimensions.append(try std.fmt.parseInt(usize, scanner.tokenString(), 10));
+                        try dimensions.append(allocator, try std.fmt.parseInt(usize, scanner.tokenString(), 10));
 
                         if (scanner.peek() == .ArrayEnd) {
                             _ = try scanner.nextToken(); // consume ']'
@@ -383,7 +383,7 @@ fn parseHeader(json: []const u8, allocator: std.mem.Allocator) ![]TensorInfo {
                 } else {
                     _ = try scanner.nextToken(); // consume ']'
                 }
-                shape = try dimensions.toOwnedSlice();
+                shape = try dimensions.toOwnedSlice(allocator);
             } else if (std.mem.eql(u8, prop_name, "data_offsets")) {
                 try scanner.expectToken(.ArrayBegin);
 
@@ -415,12 +415,12 @@ fn parseHeader(json: []const u8, allocator: std.mem.Allocator) ![]TensorInfo {
 
         // Validate tensor info
         if (dtype == null or shape == null or start_offset == null or end_offset == null) {
-            std.debug.print("{?} {?d} {?d} {?d}\n", .{ dtype, shape, start_offset, end_offset });
+            std.debug.print("{?} {?any} {?any} {?any}\n", .{ dtype, shape, start_offset, end_offset });
             return Error.InvalidHeader;
         }
 
         // Create tensor info
-        try tensors.append(TensorInfo{
+        try tensors.append(allocator, TensorInfo{
             .name = try allocator.dupe(u8, tensor_name),
             .dtype = dtype.?,
             .shape = shape.?, // Already owned
@@ -446,7 +446,7 @@ fn parseHeader(json: []const u8, allocator: std.mem.Allocator) ![]TensorInfo {
             }
         }.lessThan);
     }
-    return tensors.toOwnedSlice();
+    return tensors.toOwnedSlice(allocator);
 }
 
 /// For Zigrad's style convention

@@ -19,7 +19,7 @@ fn getSampleData(allocator: std.mem.Allocator) !struct {
     const shape = try allocator.dupe(usize, &[_]usize{ 1000, 500 });
     const dtype = stz.Dtype.f32;
     const n = shape[0] * shape[1] * dtype.size();
-    const data = try allocator.alignedAlloc(u8, 8, n);
+    const data = try allocator.alignedAlloc(u8, .@"8", n);
     @memset(data, 0);
     return .{ .data = data, .shape = shape, .dtype = dtype };
 }
@@ -45,7 +45,7 @@ const BmResult = struct {
     }
 
     pub fn print_to_writer(self: Self, writer: anytype) !void {
-        try writer.print("{d}_MB [min={d:.3}, avg={d:.3}, max={d:.3}]", .{ self.total_mb, self.min, self.avg, self.max });
+        try writer.print("{}_MB [min={d:.3}, avg={d:.3}, max={d:.3}]", .{ self.total_mb, self.min, self.avg, self.max });
     }
 };
 
@@ -58,12 +58,12 @@ fn benchSerialize(allocator: std.mem.Allocator) !BmResult {
 
     const n_layers = 5;
     var total_mb: usize = 0;
-    var tensorList = std.ArrayList(stz.Tensor).init(allocator);
-    defer tensorList.deinit();
+    var tensorList = std.ArrayList(stz.Tensor).empty;
+    defer tensorList.deinit(allocator);
 
     inline for (0..n_layers) |i| {
-        const name = std.fmt.comptimePrint("weight{d}", .{i});
-        try tensorList.append(stz.Tensor{
+        const name = std.fmt.comptimePrint("weight{}", .{i});
+        try tensorList.append(allocator, stz.Tensor{
             .name = name,
             .dtype = sample.dtype,
             .shape = sample.shape,
@@ -115,11 +115,11 @@ fn benchDeserialize(allocator: std.mem.Allocator) !BmResult {
 
     const n_layers = 5;
     var total_mb: usize = 0;
-    var tensorList = std.ArrayList(stz.Tensor).init(allocator);
-    defer tensorList.deinit();
+    var tensorList = std.ArrayList(stz.Tensor).empty;
+    defer tensorList.deinit(allocator);
     inline for (0..n_layers) |i| {
-        const name = std.fmt.comptimePrint("weight{d}", .{i});
-        try tensorList.append(stz.Tensor{
+        const name = std.fmt.comptimePrint("weight{}", .{i});
+        try tensorList.append(allocator, stz.Tensor{
             .name = name,
             .dtype = sample.dtype,
             .shape = sample.shape,
@@ -173,7 +173,7 @@ fn benchDeserialize(allocator: std.mem.Allocator) !BmResult {
         };
     }
 
-    std.debug.print("total len: {d}\n", .{sum_total});
+    std.debug.print("total len: {}\n", .{sum_total});
 
     return BmResult{
         .total_mb = total_mb,
@@ -185,14 +185,17 @@ fn benchDeserialize(allocator: std.mem.Allocator) !BmResult {
 
 /// Benchmark runner.
 pub fn main() !void {
-    const stdout = std.io.getStdOut().writer();
-
     const ser_result = try benchSerialize(std.heap.raw_c_allocator);
     const dser_result = try benchDeserialize(std.heap.raw_c_allocator);
+
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
 
     try stdout.print("Serialization: ", .{});
     try ser_result.as_us().print_to_writer(stdout);
     try stdout.print("\nDeserialization: ", .{});
     try dser_result.as_us().print_to_writer(stdout);
     try stdout.print("\n", .{});
+    try stdout.flush();
 }
