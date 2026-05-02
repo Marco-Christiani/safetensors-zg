@@ -32,7 +32,7 @@ const BmResult = struct {
     max: f64,
 
     fn _ns_to_us(x: f64) f64 {
-        return x / std.time.ns_per_us;
+        return x / @as(f64, std.time.ns_per_us);
     }
 
     pub fn as_us(self: Self) Self {
@@ -51,7 +51,7 @@ const BmResult = struct {
 
 /// Benchmark serialization: builds 5 tensors (total ~10 MB) and measures the time to serialize.
 /// Should match the official [benchmark.rs](https://github.com/huggingface/safetensors/blob/7bf65ad7d56be10331dd9c15b67d82d1c5f39cc0/safetensors/benches/benchmark.rs)
-fn benchSerialize(allocator: std.mem.Allocator) !BmResult {
+fn benchSerialize(io: std.Io, allocator: std.mem.Allocator) !BmResult {
     const sample = try getSampleData(allocator);
     defer allocator.free(sample.data);
     defer allocator.free(sample.shape);
@@ -83,16 +83,16 @@ fn benchSerialize(allocator: std.mem.Allocator) !BmResult {
         _ = arena.reset(.retain_capacity);
     }
 
-    var total: usize = 0;
-    var min: usize = std.math.maxInt(u63);
-    var max: usize = 0;
-    var timer = try std.time.Timer.start();
+    var total: u64 = 0;
+    var min: u64 = std.math.maxInt(u63);
+    var max: u64 = 0;
     const n = 100;
     for (0..n) |_| {
-        timer.reset();
+        const start = std.Io.Timestamp.now(io, .awake);
         _ = try stz.serialize_tensors(tensorList, arena.allocator());
-        const time = timer.lap();
+        const elapsed = start.untilNow(io, .awake);
         _ = arena.reset(.retain_capacity);
+        const time: u64 = @intCast(elapsed.toNanoseconds());
         total += time;
         if (time < min) min = time;
         if (time > max) max = time;
@@ -108,7 +108,7 @@ fn benchSerialize(allocator: std.mem.Allocator) !BmResult {
 
 /// Benchmark deserialization: takes a serialized buffer (from 5 tensors) and measures the time to load.
 /// Should match the official [benchmark.rs](https://github.com/huggingface/safetensors/blob/7bf65ad7d56be10331dd9c15b67d82d1c5f39cc0/safetensors/benches/benchmark.rs)
-fn benchDeserialize(allocator: std.mem.Allocator) !BmResult {
+fn benchDeserialize(io: std.Io, allocator: std.mem.Allocator) !BmResult {
     const sample = try getSampleData(allocator);
     defer allocator.free(sample.data);
     defer allocator.free(sample.shape);
@@ -151,17 +151,17 @@ fn benchDeserialize(allocator: std.mem.Allocator) !BmResult {
         };
     }
 
-    var total: usize = 0;
-    var min: usize = std.math.maxInt(u63);
-    var max: usize = 0;
-    var timer = try std.time.Timer.start();
+    var total: u64 = 0;
+    var min: u64 = std.math.maxInt(u63);
+    var max: u64 = 0;
     const n = 100;
     for (0..n) |_| {
-        timer.reset();
+        const start = std.Io.Timestamp.now(io, .awake);
         var result = try stz.SafeTensorsFile.deserialize(serialized, fba.allocator());
-        const time = timer.lap();
+        const elapsed = start.untilNow(io, .awake);
         result.deinit();
         fba.reset();
+        const time: u64 = @intCast(elapsed.toNanoseconds());
         total += time;
         if (time < min) min = time;
         if (time > max) max = time;
@@ -184,12 +184,12 @@ fn benchDeserialize(allocator: std.mem.Allocator) !BmResult {
 }
 
 /// Benchmark runner.
-pub fn main() !void {
-    const ser_result = try benchSerialize(std.heap.raw_c_allocator);
-    const dser_result = try benchDeserialize(std.heap.raw_c_allocator);
+pub fn main(init: std.process.Init) !void {
+    const ser_result = try benchSerialize(init.io, std.heap.c_allocator);
+    const dser_result = try benchDeserialize(init.io, std.heap.c_allocator);
 
     var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = std.Io.File.stdout().writer(init.io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
     try stdout.print("Serialization: ", .{});

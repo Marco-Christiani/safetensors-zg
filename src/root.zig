@@ -152,9 +152,9 @@ pub fn serializeTensors(tensors: std.ArrayList(Tensor), allocator: std.mem.Alloc
     // Get offsets for each tensor in the data section
     // offsets relative to the start of the data section
     var offset: u64 = 0;
-    var header_buf = std.ArrayList(u8).empty;
-    defer header_buf.deinit(allocator);
-    const writer = header_buf.writer(allocator);
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+    const writer = &aw.writer;
     try writer.writeAll("{");
     var first = true;
     for (sorted_tensors) |tensor| {
@@ -187,8 +187,9 @@ pub fn serializeTensors(tensors: std.ArrayList(Tensor), allocator: std.mem.Alloc
     }
     try writer.writeAll("}");
 
+    const header = aw.writer.buffered();
     // extend length the next align(8) boundary, which will be where data starts
-    const json_len = header_buf.items.len;
+    const json_len = header.len;
     const padded_len = (json_len + 7) & ~(@as(usize, 7)); // nearest multiple of 8
 
     // total file size = 8 (header size) + padded header + all tensor data.
@@ -198,9 +199,7 @@ pub fn serializeTensors(tensors: std.ArrayList(Tensor), allocator: std.mem.Alloc
     std.mem.writePackedIntNative(u64, out_buffer[0..8], 0, json_len);
 
     // Copy header and pad with spaces
-    const header = try header_buf.toOwnedSlice(allocator);
     @memcpy(out_buffer[8 .. 8 + json_len], header);
-    allocator.free(header);
     if (padded_len > json_len) {
         @memset(out_buffer[8 + json_len .. 8 + padded_len], ' ');
     }
@@ -691,7 +690,7 @@ test "deserialize" {
     const total_size = 8 + padded_header_size + data_size;
 
     // Allocate aligned buffer
-    var aligned_buffer = try allocator.alignedAlloc(u8, 8, total_size);
+    var aligned_buffer = try allocator.alignedAlloc(u8, .@"8", total_size);
     defer allocator.free(aligned_buffer);
 
     // Write header size
