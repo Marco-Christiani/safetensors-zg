@@ -126,8 +126,9 @@ pub const Tensor = struct {
 /// Serialize a list of Tensors into a buffer formatted as safetensors.
 /// NOTE: might make more sense to accept a writer here
 pub fn serializeTensors(tensors: std.ArrayList(Tensor), allocator: std.mem.Allocator) ![]u8 {
+    const owns_sorted_tensors = build_options.enable_sort and tensors.items.len > 1;
     const sorted_tensors = blk: {
-        if (build_options.enable_sort and tensors.items.len > 1) {
+        if (owns_sorted_tensors) {
             const sorted_tensors = try allocator.alloc(Tensor, tensors.items.len);
             @memcpy(sorted_tensors, tensors.items);
 
@@ -147,7 +148,7 @@ pub fn serializeTensors(tensors: std.ArrayList(Tensor), allocator: std.mem.Alloc
             break :blk tensors.items;
         }
     };
-    defer if (build_options.enable_sort) allocator.free(sorted_tensors);
+    defer if (owns_sorted_tensors) allocator.free(sorted_tensors);
 
     // Get offsets for each tensor in the data section
     // offsets relative to the start of the data section
@@ -669,6 +670,26 @@ const JsonScanner = struct {
         }
     }
 };
+
+test "serialize one caller-owned tensor" {
+    const testing = std.testing;
+    const shape = [_]usize{3};
+    const data align(8) = [_]u8{ 1, 2, 3 };
+    var backing = [_]Tensor{.{
+        .name = "value",
+        .dtype = .u8,
+        .shape = &shape,
+        .data = &data,
+    }};
+    const tensors = std.ArrayList(Tensor).fromOwnedSlice(&backing);
+
+    const bytes = try serializeTensors(tensors, testing.allocator);
+    defer testing.allocator.free(bytes);
+    var file = try SafeTensorsFile.deserialize(bytes, testing.allocator);
+    defer file.deinit();
+    const view = try file.get("value");
+    try testing.expectEqualSlices(u8, &data, view.data);
+}
 
 test "deserialize" {
     const allocator = std.testing.allocator;
