@@ -1,5 +1,6 @@
-///! Implements the safetensors format https://huggingface.co/docs/safetensors/index
+//! Implements the safetensors format https://huggingface.co/docs/safetensors/index
 const std = @import("std");
+const native_endian = @import("builtin").target.cpu.arch.endian();
 const build_options = @import("build_options");
 
 pub const Error = error{
@@ -197,7 +198,7 @@ pub fn serializeTensors(tensors: std.ArrayList(Tensor), allocator: std.mem.Alloc
     const totalSize = 8 + padded_len + offset;
     var out_buffer = try allocator.alloc(u8, totalSize);
 
-    std.mem.writePackedIntNative(u64, out_buffer[0..8], 0, json_len);
+    std.mem.writePackedInt(u64, out_buffer[0..8], 0, json_len, native_endian);
 
     // Copy header and pad with spaces
     @memcpy(out_buffer[8 .. 8 + json_len], header);
@@ -278,7 +279,7 @@ pub const SafeTensorsFile = struct {
     /// Deserialize a SafeTensors file from a byte buffer.
     pub fn deserialize(data: []const u8, allocator: std.mem.Allocator) !Self {
         if (data.len < 8) return Error.BufferTooSmall;
-        const header_size = std.mem.readPackedIntNative(u64, data[0..8], 0);
+        const header_size = std.mem.readPackedInt(u64, data[0..8], 0, native_endian);
         if (header_size > MAX_HEADER_SIZE) return Error.HeaderOverflow;
         const header_end = 8 + header_size;
         if (header_end > data.len) return Error.BufferTooSmall;
@@ -715,7 +716,7 @@ test "deserialize" {
     defer allocator.free(aligned_buffer);
 
     // Write header size
-    std.mem.writePackedIntNative(u64, aligned_buffer[0..8], 0, header_size);
+    std.mem.writePackedInt(u64, aligned_buffer[0..8], 0, header_size, native_endian);
 
     // Write header and pad to 8-byte boundary
     @memcpy(aligned_buffer[8 .. 8 + header_size], header);
